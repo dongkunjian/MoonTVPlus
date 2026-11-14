@@ -1,0 +1,44 @@
+name: Optimize Cloudflare (China access speed)
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: '只打印将应用的规则，不实际修改 Cloudflare'
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  optimize:
+    runs-on: ubuntu-latest
+    name: Apply cache rules and zone settings
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Verify secrets present
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          if [ -z "$CF_API_TOKEN" ]; then echo "::error::缺少 Secret CLOUDFLARE_API_TOKEN"; exit 1; fi
+          if [ -z "$CF_ACCOUNT_ID" ]; then echo "::error::缺少 Secret CLOUDFLARE_ACCOUNT_ID"; exit 1; fi
+          echo "Secrets 已就绪"
+
+      - name: Apply optimization
+        env:
+          CF_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CF_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SITE_HOST: tv.dongkunjian.ccwu.cc
+          ZONE_NAME: dongkunjian.ccwu.cc
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: python scripts/cloudflare_optimize.py
