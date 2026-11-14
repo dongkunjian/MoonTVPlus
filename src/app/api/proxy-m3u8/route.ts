@@ -175,6 +175,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    // [性能] 源站分片允许跨域时直连，绕开境外 Worker 中转；
+    //   探测失败自动回退到原代理逻辑，不降低可播放性。
+    const segmentsDirect = await probeSegmentsCors(m3u8Content, m3u8Url, request);
+
     // 处理 m3u8 中的相对链接
     m3u8Content = resolveM3u8Links(
       m3u8Content,
@@ -183,7 +187,8 @@ export async function GET(request: NextRequest) {
       origin,
       token || '',
       adBlockEnabled,
-      proxySegments
+      proxySegments,
+      segmentsDirect
     );
 
     // 返回处理后的 m3u8 内容
@@ -262,6 +267,64 @@ function filterAdsFromM3U8Default(type: string, m3u8Content: string): string {
   return filteredLines.join('\n');
 }
 
+
+/**
+ * 探测源站媒体分片是否允许浏览器跨域直连。
+ * 中国线路下 Cloudflare 无大陆节点，每个 .ts 若经境外 Worker 中转都要多绕一圈，
+ * 是播放卡顿主因。源站自带 CORS 头时可直接让浏览器拉分片；
+ * 探测失败/超时/不允许一律返回 false，保持原有代理逻辑，绝不影响可播放性。
+ */
+async function probeSegmentsCors(
+  m3u8Content: string,
+  baseUrl: string,
+  request: NextRequest
+): Promise<boolean> {
+  try {
+    let segUrl = '';
+    for (const raw of m3u8Content.split('\n')) {
+      const l = raw.trim();
+      if (!l || l.startsWith('#')) continue;
+      if (l.includes('.m3u8')) return false; // master playlist: 交给子 m3u8 那层探测
+      segUrl = l;
+      break;
+    }
+    if (!segUrl) return false;
+    if (!segUrl.startsWith('http://') && !segUrl.startsWith('https://')) {
+      segUrl = new URL(segUrl, baseUrl).href;
+    }
+    const u = new URL(segUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const h = u.hostname;
+    if (h === 'localhost' || h === '::1' || h.startsWith('127.') ||
+        h.startsWith('10.') || h.startsWith('192.168.') ||
+        /^172\.(1[6-9]|2\d|3[01])\./.test(h) || h.endsWith('.local')) return false;
+
+    const origin = new URL(request.url).origin;
+    const ctl = new AbortController();
+    const timer = setTimeout(() => ctl.abort(), 1200);
+    let resp: Response;
+    try {
+      resp = await fetch(segUrl, {
+        method: 'GET',
+        signal: ctl.signal,
+        headers: {
+          'Range': 'bytes=0-0',
+          'Origin': origin,
+          'Referer': new URL(baseUrl).origin + '/',
+          'User-Agent': request.headers.get('user-agent') || 'Mozilla/5.0',
+        },
+      });
+    } finally {
+      clearTimeout(timer);
+    }
+    const allow = (resp.headers.get('access-control-allow-origin') || '').trim();
+    try { await resp.body?.cancel(); } catch { /* ignore */ }
+    return resp.ok && (allow === '*' || allow.includes(origin));
+  } catch {
+    return false;
+  }
+}
+
 /**
  * 将 m3u8 中的相对链接转换为绝对链接，并将子 m3u8 链接转为代理链接。
  * 此函数仅在代理模式下由服务端调用。
@@ -275,7 +338,8 @@ function resolveM3u8Links(
   proxyOrigin: string,
   token: string,
   adBlockEnabled: boolean,
-  proxySegments: boolean
+  proxySegments: boolean,
+  segmentsDirect: boolean
 ): string {
   const lines = m3u8Content.split('\n');
   const resolvedLines = [];
@@ -306,7 +370,7 @@ function resolveM3u8Links(
         }
 
         // 直链/全量代理模式：通过代理访问密钥，避免 CORS 问题
-        if (source === 'directplay' || proxySegments) {
+        if (!segmentsDirect && (source === 'directplay' || proxySegments)) {
           keyUri = `${proxyOrigin}/api/proxy/vod/segment?url=${encodeURIComponent(keyUri)}&source=${encodeURIComponent(source)}`;
         }
 
@@ -354,10 +418,12 @@ function resolveM3u8Links(
       const adBlockParam = adBlockEnabled ? '' : '&adblock=false';
       const proxySegmentsParam = proxySegments ? '&proxySegments=true' : '';
       url = `${proxyOrigin}/api/proxy-m3u8?url=${encodeURIComponent(url)}${source ? `&source=${encodeURIComponent(source)}` : ''}${tokenParam}${adBlockParam}${proxySegmentsParam}`;
-    } else if (source === 'directplay' || proxySegments) {
-      // 直链/全量代理模式：通过代理访问媒体分片（ts/jpeg/png 等）
+    } else if (!segmentsDirect && (source === 'directplay' || proxySegments)) {
+      // 源站未开放跨域：仍需代理访问媒体分片（ts/jpeg/png 等）
       url = `${proxyOrigin}/api/proxy/vod/segment?url=${encodeURIComponent(url)}&source=${encodeURIComponent(source)}`;
     }
+    // 其余情况保持原始绝对地址：源站已开放跨域，浏览器直连源站，
+    // 不再经过境外 Cloudflare 节点中转（消除播放卡顿主因）。
 
     resolvedLines.push(url);
     isNextLineUrl = false;
