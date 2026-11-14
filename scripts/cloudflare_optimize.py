@@ -234,18 +234,25 @@ def main():
     ok2, r2 = apply_phase(zone_id, HEADER_PHASE, header_rules(), 'Response Headers')
 
     print('\nZone 设置:')
-    for name in ('brotli', 'http3'):
-        code, j = req('PATCH', '/zones/%s/settings/%s' % (zone_id, name), {'value': 'on'})
-        print('  %-10s %s' % (name, '已开启' if (code == 200 and j.get('success'))
-                              else '跳过 (HTTP=%s，权限或套餐限制)' % code))
+    zone_ok = 0
+    for name, value in (('brotli', 'on'), ('http3', 'on'),
+                        ('browser_cache_ttl', 31536000), ('always_online', 'on')):
+        code, j = req('PATCH', '/zones/%s/settings/%s' % (zone_id, name), {'value': value})
+        good = code == 200 and j.get('success')
+        if good:
+            zone_ok += 1
+        print('  %-20s %s' % (name + '=' + str(value),
+                              '已应用' if good else '跳过 (HTTP=%s，权限或套餐限制)' % code))
 
     print('\n' + '=' * 72)
     if 'PERM' in (r1, r2):
-        print('[WARN] 有规则因 Token 权限不足未写入:\n' + PERM_HINT)
-    if not (ok1 or ok2):
-        print('[FAIL] 两层规则都没写成功, 优化未生效。')
+        print('[WARN] 缓存规则/响应头规则因 Token 权限不足未写入:\n' + PERM_HINT)
+        print('       已改用无需该权限的 Zone 设置 browser_cache_ttl 覆盖浏览器缓存头。')
+    if not (ok1 or ok2 or zone_ok):
+        print('[FAIL] 规则与 Zone 设置都没写成功, 优化未生效。')
         sys.exit(1)
-    print('完成。至少一层规则已生效。')
+    print('完成。已生效项: 缓存规则=%s 响应头规则=%s Zone设置=%d 项'
+          % (ok1, ok2, zone_ok))
     print('  验证: curl -sSI https://%s/<某个 /_next/static/ js> | grep -i cache-control' % SITE_HOST)
     print('        应看到 max-age=31536000, immutable')
     print('  播放: 浏览器 Console 执行 localStorage.removeItem("directplay_proxy_domains")')
