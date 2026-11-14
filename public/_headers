@@ -1,0 +1,31 @@
+# Cloudflare Workers Static Assets 自定义响应头
+# 官方默认给静态资源发 Cache-Control: public, max-age=0, must-revalidate,
+# 导致浏览器每次都要跨境发起 304 验证(实测 0.7~1.0s)。
+# Next.js 构建产物文件名带内容 hash, 可安全永久缓存。
+
+/_next/static/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/favicon.ico
+  Cache-Control: public, max-age=86400
+
+/icons/*
+  Cache-Control: public, max-age=604800
+
+/logo.png
+  Cache-Control: public, max-age=604800
+
+/screenshot1.png
+  Cache-Control: public, max-age=604800
+
+/screenshot2.png
+  Cache-Control: public, max-age=604800
+
+/screenshot3.png
+  Cache-Control: public, max-age=604800
+
+/robots.txt
+  Cache-Control: public, max-age=86400
+
+/*
+  X-Content-Type-Options: nosniff
