@@ -370,7 +370,7 @@ function resolveM3u8Links(
         }
 
         // 直链/全量代理模式：通过代理访问密钥，避免 CORS 问题
-        if (!segmentsDirect && (source === 'directplay' || proxySegments)) {
+        if (proxySegments || (!segmentsDirect && source === 'directplay')) {
           keyUri = `${proxyOrigin}/api/proxy/vod/segment?url=${encodeURIComponent(keyUri)}&source=${encodeURIComponent(source)}`;
         }
 
@@ -418,7 +418,7 @@ function resolveM3u8Links(
       const adBlockParam = adBlockEnabled ? '' : '&adblock=false';
       const proxySegmentsParam = proxySegments ? '&proxySegments=true' : '';
       url = `${proxyOrigin}/api/proxy-m3u8?url=${encodeURIComponent(url)}${source ? `&source=${encodeURIComponent(source)}` : ''}${tokenParam}${adBlockParam}${proxySegmentsParam}`;
-    } else if (!segmentsDirect && (source === 'directplay' || proxySegments)) {
+    } else if (proxySegments || (!segmentsDirect && source === 'directplay')) {
       // 源站未开放跨域：仍需代理访问媒体分片（ts/jpeg/png 等）
       url = `${proxyOrigin}/api/proxy/vod/segment?url=${encodeURIComponent(url)}&source=${encodeURIComponent(source)}`;
     }
