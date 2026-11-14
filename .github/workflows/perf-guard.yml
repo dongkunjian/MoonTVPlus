@@ -1,0 +1,60 @@
+name: Perf Guard (auto-heal after upstream sync)
+
+# 本仓库 fork 自 mtvpls/MoonTVPlus。点 GitHub「Sync fork」或 merge 上游后，
+# 上游对 cloudflare-deploy.yml / proxy-m3u8/route.ts 的改动可能覆盖本地性能补丁。
+# 本任务在每次 push 到 main、每天定时、或手动触发时检查 5 处补丁，
+# 缺了就自动补回、提交，并重新部署到 Cloudflare（让线上立刻恢复）。
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    - cron: '23 2 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+concurrency:
+  group: perf-guard
+  cancel-in-progress: false
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    name: Check and restore performance patches
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Check / restore patches
+        id: guard
+        run: python scripts/perf_guard.py --apply
+
+      - name: Commit restored patches
+        if: steps.guard.outputs.changed == 'true'
+        run: |
+          git config user.name "perf-guard[bot]"
+          git config user.email "perf-guard@users.noreply.github.com"
+          git add public/_headers scripts/cloudflare_optimize.py \
+                  .github/workflows/optimize-cloudflare.yml \
+                  .github/workflows/cloudflare-deploy.yml \
+                  src/app/api/proxy-m3u8/route.ts
+          git commit -m "chore(perf-guard): 上游同步后自动恢复性能补丁 [skip ci]" || exit 0
+          git push
+
+      - name: Redeploy to Cloudflare
+        if: steps.guard.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run cloudflare-deploy.yml --ref main
+
+      - name: Summary
+        if: always()
+        run: echo "perf-guard finished" >> "$GITHUB_STEP_SUMMARY"
