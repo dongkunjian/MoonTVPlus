@@ -147,6 +147,17 @@ jobs:
       - name: Build for Cloudflare
         run: pnpm run build:cloudflare
 
+      - name: Apply performance headers
+        run: |
+          mkdir -p .open-next/assets
+          if [ -f public/_headers ]; then
+            cp public/_headers .open-next/assets/_headers
+            echo "headers copied to assets root"
+            head -8 .open-next/assets/_headers
+          else
+            echo "public/_headers missing, skipped"
+          fi
+
       - name: Install Wrangler
         run: pnpm add -g wrangler@4.60.0
 
